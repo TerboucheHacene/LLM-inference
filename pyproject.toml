@@ -1,0 +1,13 @@
+[project]
+name = "llm-inference"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "compressed-tensors>=0.18.0",
+    "datasets>=5.0.1",
+    "ipykernel>=7.3.0",
+    "llmcompressor>=0.13.0",
+    "torch>=2.13.0",
+    "transformers>=4.52.1",
+]
