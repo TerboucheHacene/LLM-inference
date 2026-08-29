@@ -1,0 +1,68 @@
+// Grafana Alloy: discover local Docker containers and ship their
+// stdout/stderr logs to Loki. Successor to Promtail (EOL 2026).
+
+// Discover all running containers via the Docker Engine API.
+discovery.docker "containers" {
+	host = "unix:///var/run/docker.sock"
+}
+
+// Turn Docker metadata into clean Loki labels (e.g. container="vllm").
+discovery.relabel "containers" {
+	targets = discovery.docker.containers.targets
+
+	rule {
+		source_labels = ["__meta_docker_container_name"]
+		regex         = "/(.*)"
+		target_label  = "container"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_log_stream"]
+		target_label  = "stream"
+	}
+}
+
+// Tail container logs and forward them to the Loki writer below.
+loki.source.docker "containers" {
+	host       = "unix:///var/run/docker.sock"
+	targets    = discovery.relabel.containers.output
+	labels     = {job = "docker"}
+	forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+	endpoint {
+		url = "http://loki:3100/loki/api/v1/push"
+	}
+}
+
+// ---- Traces: receive OTLP from vLLM, forward to Tempo ----
+
+// vLLM's otlp-traces-endpoint points here (alloy:4317).
+otelcol.receiver.otlp "default" {
+	grpc {
+		endpoint = "0.0.0.0:4317"
+	}
+	http {
+		endpoint = "0.0.0.0:4318"
+	}
+	output {
+		traces = [otelcol.processor.batch.default.input]
+	}
+}
+
+// Batch spans before export to cut per-request overhead.
+otelcol.processor.batch "default" {
+	output {
+		traces = [otelcol.exporter.otlp.tempo.input]
+	}
+}
+
+otelcol.exporter.otlp "tempo" {
+	client {
+		endpoint = "tempo:4317"
+		tls {
+			insecure = true
+		}
+	}
+}

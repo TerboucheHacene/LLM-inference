@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "otel": {
+      "format": "%(levelname)s %(asctime)s [%(filename)s:%(lineno)d] [trace_id=%(otelTraceID)s span_id=%(otelSpanID)s] %(message)s",
+      "datefmt": "%m-%d %H:%M:%S"
+    }
+  },
+  "handlers": {
+    "otel": {
+      "class": "logging.StreamHandler",
+      "formatter": "otel",
+      "stream": "ext://sys.stdout"
+    }
+  },
+  "root": {
+    "handlers": ["otel"],
+    "level": "INFO"
+  },
+  "loggers": {
+    "vllm": {
+      "handlers": ["otel"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "uvicorn": {
+      "handlers": ["otel"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "uvicorn.access": {
+      "handlers": ["otel"],
+      "level": "INFO",
+      "propagate": false
+    }
+  }
+}

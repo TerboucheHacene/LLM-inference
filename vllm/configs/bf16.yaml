@@ -1,0 +1,20 @@
+# vLLM serve config: https://docs.vllm.ai/en/v0.27.1/configuration/serve_args/
+# Keys are the long-form CLI flags without the leading --.
+
+model: /models/Qwen3-0.6B
+served-model-name: Qwen/Qwen3-0.6B
+dtype: bfloat16
+max-model-len: 4096
+gpu-memory-utilization: 0.75
+
+host: "0.0.0.0"
+port: 8000
+
+# Emit per-request OTLP traces to Alloy, which forwards them to Tempo.
+# Requires the OpenTelemetry deps (installed by vllm/entrypoint.sh on startup).
+otlp-traces-endpoint: "http://alloy:4317"
+
+enable-prefix-caching: true
+# max-num-seqs: 256
+# max-num-batched-tokens: 8192
+# enable-chunked-prefill: true

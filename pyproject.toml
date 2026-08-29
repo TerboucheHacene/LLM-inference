@@ -1,13 +1,26 @@
 [project]
 name = "llm-inference"
 version = "0.1.0"
-description = "Add your description here"
+description = "Local LLM inference lab: quantize, serve with vLLM, benchmark, and observe"
 requires-python = ">=3.12"
 dependencies = [
     "compressed-tensors>=0.18.0",
     "datasets>=5.0.1",
+    "guidellm[recommended]>=0.7.3",
     "ipykernel>=7.3.0",
     "llmcompressor>=0.13.0",
+    "lm-eval[api]>=0.4.12",
+    "openai>=3.3.1",
     "torch>=2.13.0",
     "transformers>=4.52.1",
 ]
+
+# Host driver 535 is CUDA 12.2. Default PyPI torch 2.13 is CUDA 13 and cannot
+# initialize the GPU. Use the CUDA 12.9 wheels instead.
+[[tool.uv.index]]
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu129" }

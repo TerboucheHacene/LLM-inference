@@ -1,0 +1,183 @@
+services:
+  vllm:
+    image: vllm/vllm-openai:${VLLM_IMAGE_TAG:-v0.27.1-cu129}
+    container_name: vllm
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "${VLLM_PORT:-8000}:8000"
+    volumes:
+      - ./models:/models:ro
+      - ./vllm/configs/${VLLM_CONFIG:-bf16.yaml}:/etc/vllm/config.yaml:ro
+      - ./vllm/entrypoint.sh:/entrypoint.sh:ro
+      - ./observability/otel:/etc/otel:ro
+    # Snap Docker's CDI path bind-mounts nvidia-cuda-mps-control and fails.
+    # The legacy nvidia runtime injects the GPU without that mount.
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      # Names all OTLP spans in Tempo (otherwise "unknown_service").
+      OTEL_SERVICE_NAME: vllm
+      # --- opentelemetry-instrument (auto) config ---
+      # FastAPI instrumentation opens a *server span* that stays the current
+      # context for the whole request, so logs emitted during the request get a
+      # real trace_id (vLLM's own llm_request span is built post-hoc and can't).
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://alloy:4317
+      OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: grpc
+      OTEL_EXPORTER_OTLP_TRACES_INSECURE: "true"
+      # Enables LoggingInstrumentor's trace-id injection into every LogRecord.
+      OTEL_PYTHON_LOG_CORRELATION: "true"
+      # Custom vLLM logging config that prints those trace_id/span_id fields.
+      VLLM_LOGGING_CONFIG_PATH: /etc/otel/vllm-logging.json
+    entrypoint: ["/bin/bash", "/entrypoint.sh"]
+    command:
+      - --config
+      - /etc/vllm/config.yaml
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_IMAGE_TAG:-v3.1.0}
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - vllm
+
+  grafana:
+    image: grafana/grafana:${GRAFANA_IMAGE_TAG:-11.4.0}
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+
+  loki:
+    image: grafana/loki:${LOKI_IMAGE_TAG:-3.3.2}
+    container_name: loki
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/config.yml"]
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./observability/loki/config.yml:/etc/loki/config.yml:ro
+      - loki-data:/loki
+
+  # Tails Docker container stdout/stderr and ships it to Loki.
+  # Runs as root to read the Docker socket.
+  alloy:
+    image: grafana/alloy:${ALLOY_IMAGE_TAG:-v1.5.1}
+    container_name: alloy
+    restart: unless-stopped
+    user: root
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --storage.path=/var/lib/alloy/data
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy-data:/var/lib/alloy/data
+    depends_on:
+      - loki
+      - tempo
+
+  tempo:
+    image: grafana/tempo:${TEMPO_IMAGE_TAG:-2.6.1}
+    container_name: tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo/config.yml"]
+    ports:
+      - "${TEMPO_PORT:-3200}:3200"
+    volumes:
+      - ./observability/tempo/config.yml:/etc/tempo/config.yml:ro
+      - tempo-data:/var/tempo
+
+  # --- Infra exporters (Prometheus-only, no host ports) ---
+
+  # Host-level metrics: CPU, memory, disk, network, filesystem.
+  node-exporter:
+    image: prom/node-exporter:${NODE_EXPORTER_IMAGE_TAG:-v1.8.2}
+    container_name: node-exporter
+    restart: unless-stopped
+    pid: host
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|run)($$|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+
+  # Per-container resource usage (CPU/mem/net/blkio for each container).
+  cadvisor:
+    image: ghcr.io/google/cadvisor:${CADVISOR_IMAGE_TAG:-v0.60.5}
+    container_name: cadvisor
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      # NOTE: /var/lib/docker is intentionally omitted — this host runs snap
+      # Docker (data lives under /var/snap/...), so that path doesn't exist and
+      # bind-mounting it fails. cAdvisor still reports per-container metrics via
+      # cgroups; only image/layer disk stats are unavailable.
+      - /dev/disk/:/dev/disk:ro
+
+  # NVIDIA GPU metrics via DCGM. Pinned to a DCGM 3.3.x build for driver 535
+  # (DCGM 4.x needs a newer driver). Counters trimmed to NVML-backed fields
+  # that a consumer GeForce (RTX 3090) actually supports.
+  dcgm-exporter:
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:${DCGM_EXPORTER_IMAGE_TAG:-3.3.9-3.6.1-ubuntu22.04}
+    container_name: dcgm-exporter
+    restart: unless-stopped
+    runtime: nvidia
+    cap_add:
+      - SYS_ADMIN
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    command: ["-f", "/etc/dcgm-exporter/counters.csv"]
+    volumes:
+      - ./observability/dcgm/counters.csv:/etc/dcgm-exporter/counters.csv:ro
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  alloy-data:
+  tempo-data:
