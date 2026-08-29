@@ -1,6 +1,6 @@
 # LLM-inference
 
-Local lab for **quantizing**, **serving**, **benchmarking**, and **observing** an LLM with [vLLM](https://github.com/vllm-project/vllm).
+Local lab for **quantizing**, **serving**, **benchmarking**, and **observing** an LLM with [vLLM](https://github.com/vllm-project/vllm), [llm-compressor](https://github.com/vllm-project/llm-compressor), [GuideLLM](https://github.com/vllm-project/guidellm), and [lm_eval](https://github.com/EleutherAI/lm-evaluation-harness).
 
 ## Layout
 
@@ -48,9 +48,9 @@ VLLM_CONFIG=w4a16.yaml docker compose up -d --force-recreate
 
 ## Notebooks
 
-1. `notebooks/01-quantize-gptq.ipynb` — GPTQ W4A16 with `llm-compressor`
+1. `notebooks/01-quantize-gptq.ipynb` — GPTQ W4A16 with [llm-compressor](https://github.com/vllm-project/llm-compressor)
 2. `notebooks/02-serve-vllm.ipynb` — query the running server and inspect live metrics
-3. `notebooks/03-benchmark-eval.ipynb` — throughput / quality evaluation
+3. `notebooks/03-benchmark-eval.ipynb` — [GuideLLM](https://github.com/vllm-project/guidellm) throughput + [lm_eval](https://github.com/EleutherAI/lm-evaluation-harness) quality
 
 Generated JSON from the last two lands in `notebooks/outputs/` (gitignored).
 
